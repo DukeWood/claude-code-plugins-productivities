@@ -144,19 +144,23 @@ send_to_slack() {
     local payload="$1"
     local python=$(find_python)
 
-    $python << PYEOF
+    # Pass payload via stdin to avoid heredoc escaping issues
+    echo "$payload" | $python -c "
 import json
 import urllib.request
+import sys
 
-webhook = "${SLACK_WEBHOOK}"
+webhook = '${SLACK_WEBHOOK}'
+
 try:
-    payload = json.loads('''${payload}''')
+    payload_str = sys.stdin.read()
+    payload = json.loads(payload_str)
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(webhook, data=data, headers={'Content-Type': 'application/json'})
     urllib.request.urlopen(req, timeout=5)
-except Exception as e:
+except:
     pass  # Fail silently - don't block Claude
-PYEOF
+"
 }
 
 # ============================================
@@ -165,12 +169,9 @@ PYEOF
 build_pretooluse_payload() {
     local tool_name="$1"
     local tool_input="$2"
-
-    # Escape for JSON
     local python=$(find_python)
-    local input_escaped=$($python -c "import json,sys; print(json.dumps(sys.stdin.read())[1:-1])" <<< "$tool_input")
 
-    # Truncate for display
+    # Truncate first, then escape
     local input_short="${tool_input:0:150}"
     [ ${#tool_input} -gt 150 ] && input_short="${input_short}..."
     input_short=$(echo "$input_short" | tr '\n' ' ')
@@ -179,37 +180,67 @@ build_pretooluse_payload() {
     local switch_display=""
     [ -n "$switch_command" ] && switch_display=" | :point_right: \`$switch_command\`"
 
-    local python=$(find_python)
+    # Use Slack emoji codes instead of Unicode emojis (more reliable)
+    local slack_emoji
+    case "$ntype" in
+        "Bash Command") slack_emoji=":computer:" ;;
+        "File Write") slack_emoji=":pencil2:" ;;
+        "Web Access") slack_emoji=":globe_with_meridians:" ;;
+        "File Read") slack_emoji=":book:" ;;
+        "Agent Task") slack_emoji=":robot_face:" ;;
+        *) slack_emoji=":wrench:" ;;
+    esac
 
-    # Escape single quotes for Python string embedding
-    local input_escaped=$(echo "$input_short" | sed "s/'/\\\\'/g")
-    local switch_escaped=$(echo "$switch_display" | sed "s/'/\\\\'/g")
-
-    $python -c "
+    # Use Python to safely build the entire payload with proper escaping
+    $python << PYEOF
 import json
+
+# Safe values passed as Python strings
+tool_name = """$tool_name"""
+input_short = """$input_short"""
+color = """$color"""
+slack_emoji = """$slack_emoji"""
+ntype = """$ntype"""
+terminal_type = """$terminal_type"""
+project = """$project"""
+session_display = """$session_display"""
+switch_display = """$switch_display"""
+serial_number = """$serial_number"""
+timestamp = """$timestamp"""
+
+# Build header line
+header = f"{slack_emoji} *{ntype}* | \`{tool_name}\` | {terminal_type}"
+subheader = f":hourglass: *{project}* -> \`{session_display}\`{switch_display}"
+context = f"\`{serial_number}\` | {timestamp} | \`\`\`{input_short}\`\`\`"
+
+# Use chr(10) to safely represent newline in the output JSON
+newline = chr(10)
+full_text = header + newline + subheader
+
 payload = {
     'attachments': [{
-        'color': '$color',
+        'color': color,
         'blocks': [
             {
                 'type': 'section',
                 'text': {
                     'type': 'mrkdwn',
-                    'text': '$emoji *$ntype* | \`$tool_name\` | $terminal_type\n:hourglass: *$project* → \`$session_display\`$switch_escaped'
+                    'text': full_text
                 }
             },
             {
                 'type': 'context',
                 'elements': [{
                     'type': 'mrkdwn',
-                    'text': '\`$serial_number\` | $timestamp | \`\`\`$input_escaped\`\`\`'
+                    'text': context
                 }]
             }
         ]
     }]
 }
+# json.dumps will properly escape the newline as \n
 print(json.dumps(payload))
-"
+PYEOF
 }
 
 # ============================================
@@ -220,49 +251,73 @@ build_notification_payload() {
     local body="$2"
     local git_branch="${3:-}"
     local git_status="${4:-}"
-
-    # Context line
-    local context_text="\`$serial_number\` | *$project*"
-    [ -n "$git_branch" ] && context_text="$context_text | \`$git_branch\` $git_status"
-    context_text="$context_text | $timestamp"
-
-    # Quick actions
-    local actions=""
-    [ -n "$switch_command" ] && actions="Terminal: \`$switch_command\`"
-
-    local actions_block=""
-    if [ -n "$actions" ]; then
-        actions_block=',{"type":"context","elements":[{"type":"mrkdwn","text":"*Quick Actions:* '"$actions"'"}]}'
-    fi
-
     local python=$(find_python)
 
-    # Escape variables for Python string
-    local title_escaped=$(echo "$title" | sed "s/'/\\\\'/g")
-    local body_escaped=$(echo "$body" | sed "s/'/\\\\'/g")
+    # Use Slack emoji codes instead of Unicode emojis (more reliable)
+    local slack_emoji
+    case "$ntype" in
+        "Permission Required") slack_emoji=":lock:" ;;
+        "Awaiting Input") slack_emoji=":hourglass_flowing_sand:" ;;
+        "Authentication") slack_emoji=":key:" ;;
+        "Input Required") slack_emoji=":memo:" ;;
+        "Task Complete") slack_emoji=":white_check_mark:" ;;
+        "Error") slack_emoji=":x:" ;;
+        *) slack_emoji=":bell:" ;;
+    esac
 
-    $python -c "
+    # Use Python to safely build the entire payload with proper escaping
+    $python << PYEOF
 import json
+
+# Safe values passed as Python strings
+title = """$title"""
+body = """$body"""
+git_branch = """$git_branch"""
+git_status = """$git_status"""
+color = """$color"""
+slack_emoji = """$slack_emoji"""
+ntype = """$ntype"""
+project = """$project"""
+serial_number = """$serial_number"""
+timestamp = """$timestamp"""
+switch_command = """$switch_command"""
+
+# Build context line
+context_text = f"\`{serial_number}\` | *{project}*"
+if git_branch:
+    context_text += f" | \`{git_branch}\` {git_status}"
+context_text += f" | {timestamp}"
+
+# Build blocks
+blocks = [
+    {
+        'type': 'header',
+        'text': {'type': 'plain_text', 'text': f"{slack_emoji} {ntype}", 'emoji': True}
+    },
+    {
+        'type': 'context',
+        'elements': [{'type': 'mrkdwn', 'text': context_text}]
+    },
+    {'type': 'divider'},
+    {
+        'type': 'section',
+        'text': {'type': 'mrkdwn', 'text': "*" + title + "*" + chr(10) + body}
+    }
+]
+
+# Add quick actions if switch_command exists
+if switch_command:
+    blocks.append({
+        'type': 'context',
+        'elements': [{'type': 'mrkdwn', 'text': f"*Quick Actions:* Terminal: \`{switch_command}\`"}]
+    })
+
 payload = {
     'attachments': [{
-        'color': '$color',
-        'blocks': [
-            {
-                'type': 'header',
-                'text': {'type': 'plain_text', 'text': '$emoji $ntype', 'emoji': True}
-            },
-            {
-                'type': 'context',
-                'elements': [{'type': 'mrkdwn', 'text': '$context_text'}]
-            },
-            {'type': 'divider'},
-            {
-                'type': 'section',
-                'text': {'type': 'mrkdwn', 'text': '*$title_escaped*\n$body_escaped'}
-            }
-        ]
+        'color': color,
+        'blocks': blocks
     }]
 }
 print(json.dumps(payload))
-"
+PYEOF
 }

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================
-# Claude Code → Slack: Notification/Stop Hook
-# Notifies on task completion and notifications
+# Claude Code → Slack: PostToolUse Hook
+# Notifies when AskUserQuestion is used
 # ============================================
 
 # Load libraries
@@ -21,8 +21,13 @@ mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
 python=$(find_python)
 input_json=$(cat)
 
-hook_event=$(json_get "$input_json" "hook_event_name" "Notification")
+tool_name=$(json_get "$input_json" "tool_name" "Unknown")
 cwd=$(json_get "$input_json" "cwd" "Unknown")
+
+# Only handle AskUserQuestion
+if [ "$tool_name" != "AskUserQuestion" ]; then
+    exit 0
+fi
 
 # ============================================
 # Load Config (exit if not configured)
@@ -32,68 +37,42 @@ if ! load_slack_config; then
 fi
 
 # ============================================
-# Check config for notification preferences
+# Set idle state for Stop event
 # ============================================
-notify_task_complete=$($python -c "import json; c=json.load(open('$SLACK_CONFIG_FILE')); print(str(c.get('notify_on',{}).get('task_complete', True)).lower())" 2>/dev/null)
+echo '{"was_idle": true}' > "$STATE_FILE"
 
 # ============================================
-# Handle Stop Event
+# Extract question details
 # ============================================
-if [ "$hook_event" = "Stop" ]; then
-    # Check if task_complete notifications are enabled
-    if [ "$notify_task_complete" != "true" ]; then
-        exit 0
-    fi
+questions=$($python -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    tool_input = d.get('tool_input', {})
+    questions = tool_input.get('questions', [])
+    if questions:
+        q = questions[0]
+        print(q.get('question', 'Question pending'))
+    else:
+        print('Awaiting your response')
+except:
+    print('Awaiting your response')
+" <<< "$input_json" 2>/dev/null)
 
-    # Check if we were waiting for input (idle state)
-    was_idle="false"
-    if [ -f "$STATE_FILE" ]; then
-        was_idle=$($python -c "import json; print(str(json.load(open('$STATE_FILE')).get('was_idle', False)).lower())" 2>/dev/null)
-    fi
-
-    if [ "$was_idle" != "true" ]; then
-        # Not idle - skip notification
-        exit 0
-    fi
-
-    # Reset idle state
-    echo '{"was_idle": false}' > "$STATE_FILE"
-
-    # Set Stop event message
-    title="Task Complete"
-    body="Claude Code has finished responding"
-    notification_type="task_complete"
-else
-    # ============================================
-    # Handle Notification Event
-    # ============================================
-
-    # Parse notification fields
-    message=$(json_get "$input_json" "message" "")
-    notification_type=$(json_get "$input_json" "notification_type" "")
-    title=$(json_get "$input_json" "title" "Claude Code")
-    body=$(json_get "$input_json" "body" "")
-
-    # Use message field if available
-    if [ -n "$message" ]; then
-        title="Claude Code"
-        body="$message"
-    fi
-
-    # Defaults
-    [ -z "$title" ] && title="Claude Code"
-    [ -z "$body" ] && body="Notification"
-
-    # Set idle state for next Stop event
-    echo '{"was_idle": true}' > "$STATE_FILE"
-fi
+title="Input Required"
+body="${questions:-Awaiting your response}"
 
 # ============================================
 # Get Context
 # ============================================
 detect_terminal "$cwd"
 get_project_info "$cwd"
-get_notification_style "$notification_type" "$title" "$body"
+
+# Set notification style
+emoji="📝"
+ntype="Input Required"
+color="#ECB22E"  # Yellow
+export emoji ntype color
 
 # ============================================
 # Get Git Info (optional)
