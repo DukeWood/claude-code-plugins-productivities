@@ -217,7 +217,11 @@ context = f"\`{serial_number}\` | {timestamp} | \`\`\`{input_short}\`\`\`"
 newline = chr(10)
 full_text = header + newline + subheader
 
+# Notification preview text (shows in macOS notification banner)
+preview_text = f"{ntype} | {project} | {input_short[:50]}"
+
 payload = {
+    'text': preview_text,  # For macOS/mobile notification previews
     'attachments': [{
         'color': color,
         'blocks': [
@@ -312,7 +316,11 @@ if switch_command:
         'elements': [{'type': 'mrkdwn', 'text': f"*Quick Actions:* Terminal: \`{switch_command}\`"}]
     })
 
+# Notification preview text (shows in macOS notification banner)
+preview_text = f"{ntype} | {project} | {body[:50]}"
+
 payload = {
+    'text': preview_text,  # For macOS/mobile notification previews
     'attachments': [{
         'color': color,
         'blocks': blocks

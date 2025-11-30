@@ -80,6 +80,21 @@ else
         body="$message"
     fi
 
+    # ============================================
+    # Filter out duplicate notifications
+    # Skip permission-related messages (handled by PreToolUse hook)
+    # Skip waiting-for-input messages (handled by AskUserQuestion hook)
+    # ============================================
+    combined="$title $body $message"
+    if echo "$combined" | grep -qi "permission\|needs your permission"; then
+        # Already handled by permission.sh (PreToolUse hook)
+        exit 0
+    fi
+    if echo "$combined" | grep -qi "waiting for your input\|waiting for input"; then
+        # Already handled by ask-user.sh (PostToolUse hook)
+        exit 0
+    fi
+
     # Defaults
     [ -z "$title" ] && title="Claude Code"
     [ -z "$body" ] && body="Notification"
