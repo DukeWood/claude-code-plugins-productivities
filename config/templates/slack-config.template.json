@@ -1,0 +1,9 @@
+{
+    "webhook_url": "YOUR_SLACK_WEBHOOK_URL_HERE",
+    "enabled": true,
+    "notify_on": {
+        "permission_required": true,
+        "task_complete": true,
+        "errors": true
+    }
+}

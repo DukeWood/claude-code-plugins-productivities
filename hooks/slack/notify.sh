@@ -1,0 +1,115 @@
+#!/bin/bash
+# ============================================
+# Claude Code → Slack: Notification/Stop Hook
+# Notifies on task completion and notifications
+# ============================================
+
+# Load libraries
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+setup_path
+
+# ============================================
+# State file for idle detection
+# ============================================
+STATE_FILE="$HOME/.claude/config/notification_states.json"
+mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
+
+# ============================================
+# Parse Input JSON
+# ============================================
+python=$(find_python)
+input_json=$(cat)
+
+hook_event=$(json_get "$input_json" "hook_event_name" "Notification")
+cwd=$(json_get "$input_json" "cwd" "Unknown")
+
+# ============================================
+# Load Config (exit if not configured)
+# ============================================
+if ! load_slack_config; then
+    exit 0
+fi
+
+# ============================================
+# Handle Stop Event
+# ============================================
+if [ "$hook_event" = "Stop" ]; then
+    # Check if we were waiting for input (idle state)
+    was_idle="false"
+    if [ -f "$STATE_FILE" ]; then
+        was_idle=$($python -c "import json; print(str(json.load(open('$STATE_FILE')).get('was_idle', False)).lower())" 2>/dev/null)
+    fi
+
+    if [ "$was_idle" != "true" ]; then
+        # Not idle - skip notification
+        exit 0
+    fi
+
+    # Reset idle state
+    echo '{"was_idle": false}' > "$STATE_FILE"
+
+    # Set Stop event message
+    title="Task Complete"
+    body="Claude Code has finished responding"
+    notification_type="task_complete"
+else
+    # ============================================
+    # Handle Notification Event
+    # ============================================
+
+    # Parse notification fields
+    message=$(json_get "$input_json" "message" "")
+    notification_type=$(json_get "$input_json" "notification_type" "")
+    title=$(json_get "$input_json" "title" "Claude Code")
+    body=$(json_get "$input_json" "body" "")
+
+    # Use message field if available
+    if [ -n "$message" ]; then
+        title="Claude Code"
+        body="$message"
+    fi
+
+    # Defaults
+    [ -z "$title" ] && title="Claude Code"
+    [ -z "$body" ] && body="Notification"
+
+    # Set idle state for next Stop event
+    echo '{"was_idle": true}' > "$STATE_FILE"
+fi
+
+# ============================================
+# Get Context
+# ============================================
+detect_terminal "$cwd"
+get_project_info "$cwd"
+get_notification_style "$notification_type" "$title" "$body"
+
+# ============================================
+# Get Git Info (optional)
+# ============================================
+git_branch=""
+git_status=""
+
+if cd "$cwd" 2>/dev/null && git rev-parse --git-dir &>/dev/null; then
+    git_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+
+    if [ -n "$git_branch" ]; then
+        local staged=$(git diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
+        local unstaged=$(git diff --numstat 2>/dev/null | wc -l | tr -d ' ')
+        local untracked=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+
+        [ "$staged" -gt 0 ] 2>/dev/null && git_status="${git_status}S:${staged} "
+        [ "$unstaged" -gt 0 ] 2>/dev/null && git_status="${git_status}M:${unstaged} "
+        [ "$untracked" -gt 0 ] 2>/dev/null && git_status="${git_status}U:${untracked}"
+        [ -z "$git_status" ] && git_status="clean"
+    fi
+fi
+
+# ============================================
+# Build and Send Payload
+# ============================================
+payload=$(build_notification_payload "$title" "$body" "$git_branch" "$git_status")
+send_to_slack "$payload"
+
+exit 0
