@@ -63,6 +63,48 @@ cd /path/to/claude-code-plugins-productivities
 git pull
 ```
 
+## Notification Templates
+
+### PreToolUse (Permission Prompts) - Compact
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 💻 *Bash Command* | `Bash` | Terminal.app+tmux             │
+│ ⏳ *project* → `session:0.0 (window)` | 👉 `tmux attach...` │
+├─────────────────────────────────────────────────────────────┤
+│ `project-1130-001` | 09:15:23 | ```command preview```      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Notification/Stop (Task Events) - Full
+
+```
+┌─────────────────────────────────────────────────────┐
+│ ✅ Task Complete                                    │
+├─────────────────────────────────────────────────────┤
+│ `serial` | *project* | `branch` clean | 09:15:23   │
+├─────────────────────────────────────────────────────┤
+│ *Title*                                             │
+│ Message body                                        │
+├─────────────────────────────────────────────────────┤
+│ *Quick Actions:* Terminal: `tmux attach -t ...`    │
+└─────────────────────────────────────────────────────┘
+```
+
+### Emoji & Color Legend
+
+| Type | Emoji | Color |
+|------|-------|-------|
+| Bash Command | 💻 | Red |
+| File Write/Edit | ✏️ | Yellow |
+| Web Access | 🌐 | Blue |
+| File Read | 📖 | Green |
+| Agent Task | 🤖 | Purple |
+| Task Complete | ✅ | Green |
+| Permission Required | 🔐 | Red |
+| Awaiting Input | ⏳ | Yellow |
+| Error | ❌ | Red |
+
 ## Supported Terminals
 
 | Terminal | Detection | Switch Command |
@@ -72,6 +114,10 @@ git pull
 | VS Code | `$TERM_PROGRAM=vscode` | `code {cwd}` |
 | Terminal.app | `$TERM_PROGRAM=Apple_Terminal` | `open -a Terminal` |
 | Obsidian | path contains "obsidian" | `open -a Obsidian` |
+
+## Documentation
+
+- [Slack Notifications Cookbook](docs/slack-notifications-cookbook.md) - Complete guide with customization, troubleshooting, and advanced usage
 
 ## License
 
