@@ -179,29 +179,37 @@ build_pretooluse_payload() {
     local switch_display=""
     [ -n "$switch_command" ] && switch_display=" | :point_right: \`$switch_command\`"
 
-    cat << EOF
-{
-    "attachments": [{
-        "color": "$color",
-        "blocks": [
+    local python=$(find_python)
+
+    # Escape single quotes for Python string embedding
+    local input_escaped=$(echo "$input_short" | sed "s/'/\\\\'/g")
+    local switch_escaped=$(echo "$switch_display" | sed "s/'/\\\\'/g")
+
+    $python -c "
+import json
+payload = {
+    'attachments': [{
+        'color': '$color',
+        'blocks': [
             {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "$emoji *$ntype* | \`$tool_name\` | $terminal_type\n:hourglass: *$project* → \`$session_display\`$switch_display"
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': '$emoji *$ntype* | \`$tool_name\` | $terminal_type\n:hourglass: *$project* → \`$session_display\`$switch_escaped'
                 }
             },
             {
-                "type": "context",
-                "elements": [{
-                    "type": "mrkdwn",
-                    "text": "\`$serial_number\` | $timestamp | \`\`\`$input_short\`\`\`"
+                'type': 'context',
+                'elements': [{
+                    'type': 'mrkdwn',
+                    'text': '\`$serial_number\` | $timestamp | \`\`\`$input_escaped\`\`\`'
                 }]
             }
         ]
     }]
 }
-EOF
+print(json.dumps(payload))
+"
 }
 
 # ============================================
@@ -227,26 +235,34 @@ build_notification_payload() {
         actions_block=',{"type":"context","elements":[{"type":"mrkdwn","text":"*Quick Actions:* '"$actions"'"}]}'
     fi
 
-    cat << EOF
-{
-    "attachments": [{
-        "color": "$color",
-        "blocks": [
+    local python=$(find_python)
+
+    # Escape variables for Python string
+    local title_escaped=$(echo "$title" | sed "s/'/\\\\'/g")
+    local body_escaped=$(echo "$body" | sed "s/'/\\\\'/g")
+
+    $python -c "
+import json
+payload = {
+    'attachments': [{
+        'color': '$color',
+        'blocks': [
             {
-                "type": "header",
-                "text": {"type": "plain_text", "text": "$emoji $ntype", "emoji": true}
+                'type': 'header',
+                'text': {'type': 'plain_text', 'text': '$emoji $ntype', 'emoji': True}
             },
             {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": "$context_text"}]
+                'type': 'context',
+                'elements': [{'type': 'mrkdwn', 'text': '$context_text'}]
             },
-            {"type": "divider"},
+            {'type': 'divider'},
             {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": "*$title*\n$body"}
-            }$actions_block
+                'type': 'section',
+                'text': {'type': 'mrkdwn', 'text': '*$title_escaped*\n$body_escaped'}
+            }
         ]
     }]
 }
-EOF
+print(json.dumps(payload))
+"
 }
