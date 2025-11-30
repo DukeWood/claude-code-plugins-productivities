@@ -5,8 +5,10 @@ Personal productivity tools, hooks, commands, and skills for Claude Code.
 ## Quick Install
 
 ```bash
-git clone https://github.com/DukeWood/claude-code-plugins-productivities.git ~/AI/AI_Coding/Repositories/claude-code-plugins-productivities
-~/AI/AI_Coding/Repositories/claude-code-plugins-productivities/install.sh
+# Clone to your preferred location
+git clone https://github.com/DukeWood/claude-code-plugins-productivities.git
+cd claude-code-plugins-productivities
+./install.sh
 ```
 
 ## What's Included
@@ -57,7 +59,7 @@ Config is stored in `~/.claude/config/slack-config.json` (not tracked in git).
 ## Updating
 
 ```bash
-cd ~/AI/AI_Coding/Repositories/claude-code-plugins-productivities
+cd /path/to/claude-code-plugins-productivities
 git pull
 ```
 
