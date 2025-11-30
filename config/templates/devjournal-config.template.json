@@ -1,0 +1,13 @@
+{
+    "journal_path": "$HOME/DevJournals",
+    "date_format": "YYYY-MM-DD",
+    "auto_git_detect": true,
+    "default_review_days": 30,
+    "project_colors": {
+        "plugin": "#bf5af2",
+        "feature": "#ff375f",
+        "bugfix": "#ff9500",
+        "refactor": "#5ac8fa",
+        "experiment": "#34c759"
+    }
+}

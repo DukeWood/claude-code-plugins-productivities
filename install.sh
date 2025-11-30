@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================
 # Claude Code Productivities - Installer
-# Sets up Slack notification hooks
+# Sets up hooks, agents, commands, and templates
 # ============================================
 
 set -e
@@ -11,6 +11,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Get script directory (where repo is cloned)
@@ -35,78 +36,100 @@ if [ ! -d "$CLAUDE_DIR" ]; then
 fi
 
 echo -e "${GREEN}✓ Claude Code found${NC}"
+echo ""
 
 # ============================================
-# Create Config Directory
+# Component Selection
 # ============================================
+echo -e "${CYAN}Select components to install:${NC}"
+echo ""
+
+# Default all to yes
+INSTALL_SLACK="y"
+INSTALL_CHARLIE="y"
+INSTALL_DEVJOURNAL="y"
+
+read -p "  [x] Slack Notifications (hooks) [Y/n]: " input
+[[ "$input" =~ ^[nN] ]] && INSTALL_SLACK="n"
+
+read -p "  [x] Charlie - Thinking Partner (agent) [Y/n]: " input
+[[ "$input" =~ ^[nN] ]] && INSTALL_CHARLIE="n"
+
+read -p "  [x] DevJournal & DevReview (commands) [Y/n]: " input
+[[ "$input" =~ ^[nN] ]] && INSTALL_DEVJOURNAL="n"
+
+echo ""
+
+# ============================================
+# Create Directories
+# ============================================
+echo -e "${YELLOW}Creating directories...${NC}"
 mkdir -p "$CONFIG_DIR"
+mkdir -p "$CLAUDE_DIR/agents"
+mkdir -p "$CLAUDE_DIR/commands"
+mkdir -p "$CLAUDE_DIR/templates"
 mkdir -p "$CLAUDE_DIR/notification-counters"
+mkdir -p "$HOME/DevJournals"
+echo -e "${GREEN}✓ Directories created${NC}"
+echo ""
 
 # ============================================
-# Configure Slack Webhook
+# Slack Notifications
 # ============================================
-SLACK_CONFIG="$CONFIG_DIR/slack-config.json"
+if [ "$INSTALL_SLACK" = "y" ]; then
+    echo -e "${CYAN}[Slack Notifications]${NC}"
 
-if [ -f "$SLACK_CONFIG" ]; then
-    echo -e "${GREEN}✓ Slack config already exists${NC}"
-    # Verify it has webhook_url
-    if python3 -c "import json; assert json.load(open('$SLACK_CONFIG')).get('webhook_url')" 2>/dev/null; then
-        echo -e "${GREEN}✓ Webhook URL configured${NC}"
+    SLACK_CONFIG="$CONFIG_DIR/slack-config.json"
+
+    if [ -f "$SLACK_CONFIG" ]; then
+        echo -e "${GREEN}✓ Slack config already exists${NC}"
+        if python3 -c "import json; assert json.load(open('$SLACK_CONFIG')).get('webhook_url')" 2>/dev/null; then
+            echo -e "${GREEN}✓ Webhook URL configured${NC}"
+        else
+            echo -e "${YELLOW}⚠ Webhook URL missing in config${NC}"
+            read -p "Enter your Slack webhook URL: " webhook_url
+            cat > "$SLACK_CONFIG" << EOF
+{
+    "webhook_url": "$webhook_url",
+    "enabled": true
+}
+EOF
+            echo -e "${GREEN}✓ Slack config updated${NC}"
+        fi
     else
-        echo -e "${YELLOW}⚠ Webhook URL missing in config${NC}"
+        echo -e "${YELLOW}Slack webhook not configured${NC}"
+        echo ""
+        echo "To get a Slack webhook URL:"
+        echo "1. Go to https://api.slack.com/apps"
+        echo "2. Create a new app or use existing"
+        echo "3. Enable 'Incoming Webhooks'"
+        echo "4. Create a webhook for your channel"
+        echo ""
         read -p "Enter your Slack webhook URL: " webhook_url
-        cat > "$SLACK_CONFIG" << EOF
+
+        if [ -z "$webhook_url" ]; then
+            echo -e "${RED}No webhook URL provided. Skipping Slack setup.${NC}"
+        else
+            cat > "$SLACK_CONFIG" << EOF
 {
     "webhook_url": "$webhook_url",
     "enabled": true
 }
 EOF
-        echo -e "${GREEN}✓ Slack config updated${NC}"
+            echo -e "${GREEN}✓ Slack config created${NC}"
+        fi
     fi
-else
-    echo -e "${YELLOW}Slack webhook not configured${NC}"
-    echo ""
-    echo "To get a Slack webhook URL:"
-    echo "1. Go to https://api.slack.com/apps"
-    echo "2. Create a new app or use existing"
-    echo "3. Enable 'Incoming Webhooks'"
-    echo "4. Create a webhook for your channel"
-    echo ""
-    read -p "Enter your Slack webhook URL: " webhook_url
 
-    if [ -z "$webhook_url" ]; then
-        echo -e "${RED}No webhook URL provided. Skipping Slack setup.${NC}"
-    else
-        cat > "$SLACK_CONFIG" << EOF
-{
-    "webhook_url": "$webhook_url",
-    "enabled": true
-}
-EOF
-        echo -e "${GREEN}✓ Slack config created${NC}"
-    fi
-fi
+    # Set permissions
+    chmod +x "$SCRIPT_DIR/lib/"*.sh 2>/dev/null || true
+    chmod +x "$SCRIPT_DIR/hooks/slack/"*.sh 2>/dev/null || true
 
-# ============================================
-# Set Executable Permissions
-# ============================================
-echo -e "${YELLOW}Setting permissions...${NC}"
-chmod +x "$SCRIPT_DIR/lib/"*.sh 2>/dev/null || true
-chmod +x "$SCRIPT_DIR/hooks/slack/"*.sh 2>/dev/null || true
-echo -e "${GREEN}✓ Permissions set${NC}"
+    # Configure hooks
+    HOOKS_FILE="$CLAUDE_DIR/hooks.json"
+    NOTIFY_SCRIPT="$SCRIPT_DIR/hooks/slack/notify.sh"
+    PERMISSION_SCRIPT="$SCRIPT_DIR/hooks/slack/permission.sh"
 
-# ============================================
-# Update hooks.json
-# ============================================
-echo -e "${YELLOW}Configuring hooks...${NC}"
-
-HOOKS_FILE="$CLAUDE_DIR/hooks.json"
-NOTIFY_SCRIPT="$SCRIPT_DIR/hooks/slack/notify.sh"
-PERMISSION_SCRIPT="$SCRIPT_DIR/hooks/slack/permission.sh"
-
-# Create hooks.json with Slack hooks
-# Note: This will preserve existing hooks by merging
-python3 << PYEOF
+    python3 << PYEOF
 import json
 import os
 
@@ -114,7 +137,6 @@ hooks_file = "$HOOKS_FILE"
 notify_script = "$NOTIFY_SCRIPT"
 permission_script = "$PERMISSION_SCRIPT"
 
-# Load existing hooks or start fresh
 if os.path.exists(hooks_file):
     with open(hooks_file) as f:
         data = json.load(f)
@@ -124,7 +146,6 @@ else:
 if "hooks" not in data:
     data["hooks"] = {}
 
-# Define our Slack hooks
 slack_notify_hook = {
     "matcher": "",
     "hooks": [{"type": "command", "command": notify_script}]
@@ -135,36 +156,121 @@ slack_permission_hook = {
     "hooks": [{"type": "command", "command": permission_script}]
 }
 
-# Helper to add hook if not already present
 def add_hook(event_name, new_hook):
     if event_name not in data["hooks"]:
         data["hooks"][event_name] = []
-
-    # Check if this script is already configured
     for existing in data["hooks"][event_name]:
         for h in existing.get("hooks", []):
             if h.get("command") == new_hook["hooks"][0]["command"]:
-                return False  # Already exists
-
+                return False
     data["hooks"][event_name].append(new_hook)
     return True
 
-# Add hooks
-added_notify = add_hook("Notification", slack_notify_hook)
-added_stop = add_hook("Stop", slack_notify_hook)
-added_permission = add_hook("PreToolUse", slack_permission_hook)
+add_hook("Notification", slack_notify_hook)
+add_hook("Stop", slack_notify_hook)
+add_hook("PreToolUse", slack_permission_hook)
 
-# Write back
 with open(hooks_file, "w") as f:
     json.dump(data, f, indent=2)
-
-if added_notify or added_stop or added_permission:
-    print("Hooks updated")
-else:
-    print("Hooks already configured")
 PYEOF
 
-echo -e "${GREEN}✓ Hooks configured${NC}"
+    echo -e "${GREEN}✓ Hooks registered${NC}"
+    echo ""
+fi
+
+# ============================================
+# Charlie Agent
+# ============================================
+if [ "$INSTALL_CHARLIE" = "y" ]; then
+    echo -e "${CYAN}[Charlie Agent]${NC}"
+
+    # Create charlie-sessions directory
+    mkdir -p "$CLAUDE_DIR/charlie-sessions"
+
+    # Symlink agent
+    AGENT_SOURCE="$SCRIPT_DIR/agents/charlie/agent.md"
+    AGENT_TARGET="$CLAUDE_DIR/agents/charlie.md"
+
+    if [ -L "$AGENT_TARGET" ]; then
+        rm "$AGENT_TARGET"
+    elif [ -f "$AGENT_TARGET" ]; then
+        backup="${AGENT_TARGET}.bak.$(date +%Y%m%d)"
+        mv "$AGENT_TARGET" "$backup"
+        echo -e "${YELLOW}  Backed up existing: $backup${NC}"
+    fi
+
+    ln -sf "$AGENT_SOURCE" "$AGENT_TARGET"
+    echo -e "${GREEN}✓ Agent symlinked → ~/.claude/agents/charlie.md${NC}"
+
+    # Symlink command
+    COMMAND_SOURCE="$SCRIPT_DIR/commands/charlie/command.md"
+    COMMAND_TARGET="$CLAUDE_DIR/commands/charlie.md"
+
+    if [ -L "$COMMAND_TARGET" ]; then
+        rm "$COMMAND_TARGET"
+    elif [ -f "$COMMAND_TARGET" ]; then
+        backup="${COMMAND_TARGET}.bak.$(date +%Y%m%d)"
+        mv "$COMMAND_TARGET" "$backup"
+        echo -e "${YELLOW}  Backed up existing: $backup${NC}"
+    fi
+
+    ln -sf "$COMMAND_SOURCE" "$COMMAND_TARGET"
+    echo -e "${GREEN}✓ Command symlinked → ~/.claude/commands/charlie.md${NC}"
+
+    echo -e "${GREEN}✓ Session directory created${NC}"
+    echo ""
+fi
+
+# ============================================
+# DevJournal & DevReview Commands
+# ============================================
+if [ "$INSTALL_DEVJOURNAL" = "y" ]; then
+    echo -e "${CYAN}[DevJournal & DevReview]${NC}"
+
+    # Symlink devjournal command
+    SOURCE="$SCRIPT_DIR/commands/devjournal/command.md"
+    TARGET="$CLAUDE_DIR/commands/devjournal.md"
+
+    if [ -L "$TARGET" ]; then
+        rm "$TARGET"
+    elif [ -f "$TARGET" ]; then
+        backup="${TARGET}.bak.$(date +%Y%m%d)"
+        mv "$TARGET" "$backup"
+        echo -e "${YELLOW}  Backed up existing: $backup${NC}"
+    fi
+
+    ln -sf "$SOURCE" "$TARGET"
+    echo -e "${GREEN}✓ /devjournal command symlinked${NC}"
+
+    # Symlink devreview command
+    SOURCE="$SCRIPT_DIR/commands/devreview/command.md"
+    TARGET="$CLAUDE_DIR/commands/devreview.md"
+
+    if [ -L "$TARGET" ]; then
+        rm "$TARGET"
+    elif [ -f "$TARGET" ]; then
+        backup="${TARGET}.bak.$(date +%Y%m%d)"
+        mv "$TARGET" "$backup"
+        echo -e "${YELLOW}  Backed up existing: $backup${NC}"
+    fi
+
+    ln -sf "$SOURCE" "$TARGET"
+    echo -e "${GREEN}✓ /devreview command symlinked${NC}"
+
+    # Copy template (only if not exists)
+    TEMPLATE_SOURCE="$SCRIPT_DIR/templates/dev-journal.md"
+    TEMPLATE_TARGET="$CLAUDE_DIR/templates/dev-journal.md"
+
+    if [ ! -f "$TEMPLATE_TARGET" ]; then
+        cp "$TEMPLATE_SOURCE" "$TEMPLATE_TARGET"
+        echo -e "${GREEN}✓ Template installed → ~/.claude/templates/dev-journal.md${NC}"
+    else
+        echo -e "${GREEN}✓ Template already exists (preserved)${NC}"
+    fi
+
+    echo -e "${GREEN}✓ Journal directory: ~/DevJournals${NC}"
+    echo ""
+fi
 
 # ============================================
 # Clean Up Old Scripts (Migration)
@@ -192,35 +298,49 @@ if [ $migrated -eq 1 ]; then
 else
     echo -e "${GREEN}✓ No old scripts to migrate${NC}"
 fi
+echo ""
 
 # ============================================
 # Test (Dry Run)
 # ============================================
-echo -e "${YELLOW}Testing installation...${NC}"
+if [ "$INSTALL_SLACK" = "y" ]; then
+    echo -e "${YELLOW}Testing Slack hook...${NC}"
 
-if DRY_RUN=1 "$PERMISSION_SCRIPT" << 'EOF' | grep -q "decision"
+    if DRY_RUN=1 "$SCRIPT_DIR/hooks/slack/permission.sh" << 'EOF' | grep -q "decision"
 {"tool_name": "Test", "tool_input": {}, "cwd": "/tmp"}
 EOF
-then
-    echo -e "${GREEN}✓ Permission hook test passed${NC}"
-else
-    echo -e "${RED}✗ Permission hook test failed${NC}"
+    then
+        echo -e "${GREEN}✓ Permission hook test passed${NC}"
+    else
+        echo -e "${RED}✗ Permission hook test failed${NC}"
+    fi
+    echo ""
 fi
 
 # ============================================
 # Done!
 # ============================================
-echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Installation Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo "Repo location: $SCRIPT_DIR"
-echo "Hooks configured in: $HOOKS_FILE"
-echo "Slack config: $SLACK_CONFIG"
+
+echo "Available commands:"
+if [ "$INSTALL_CHARLIE" = "y" ]; then
+    echo "  /charlie [topic]     - Start thinking session with Charlie"
+fi
+if [ "$INSTALL_DEVJOURNAL" = "y" ]; then
+    echo "  /devjournal [name]   - Log a development session"
+    echo "  /devreview [name]    - Analyze development patterns"
+fi
 echo ""
-echo "To test manually:"
-echo "  $PERMISSION_SCRIPT < test-input.json"
+
+if [ "$INSTALL_SLACK" = "y" ]; then
+    echo "Slack notifications active for all tool use."
+    echo ""
+fi
+
+echo "Repo location: $SCRIPT_DIR"
 echo ""
 echo "To update later:"
 echo "  cd $SCRIPT_DIR && git pull"
