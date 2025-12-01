@@ -81,16 +81,81 @@ else
     fi
 
     # ============================================
-    # Filter out duplicate notifications
-    # Skip permission-related messages (handled by PreToolUse hook)
-    # Skip waiting-for-input messages (handled by AskUserQuestion hook)
+    # Filter notifications - only send actionable ones
     # ============================================
     combined="$title $body $message"
+
+    # Check if this is a permission request (ACTION REQUIRED)
     if echo "$combined" | grep -qi "permission\|needs your permission"; then
-        # Already handled by permission.sh (PreToolUse hook)
-        exit 0
-    fi
-    if echo "$combined" | grep -qi "waiting for your input\|waiting for input"; then
+        # This IS actionable - set type and continue
+        notification_type="permission_prompt"
+
+        # ============================================
+        # Enrich permission notification with tool details
+        # ============================================
+        TOOL_REQUEST_FILE="$HOME/.claude/config/last_tool_request.json"
+        if [ -f "$TOOL_REQUEST_FILE" ]; then
+            tool_details=$($python -c "
+import json
+import os
+
+try:
+    with open('$TOOL_REQUEST_FILE') as f:
+        data = json.load(f)
+
+    tool_name = data.get('tool_name', 'Unknown')
+    tool_input = data.get('tool_input', {})
+
+    # Format based on tool type
+    if tool_name in ['Edit', 'Write', 'Read']:
+        file_path = tool_input.get('file_path', '')
+        if file_path:
+            filename = os.path.basename(file_path)
+            dirname = os.path.dirname(file_path)
+            # Shorten path if too long
+            if len(dirname) > 50:
+                dirname = '.../' + '/'.join(dirname.split('/')[-3:])
+            print(f'{tool_name} Permission')
+            print(f':page_facing_up: File: {filename}')
+            print(f':file_folder: Path: {dirname}')
+        else:
+            print(f'{tool_name} Permission')
+    elif tool_name == 'Bash':
+        cmd = tool_input.get('command', '')
+        if len(cmd) > 80:
+            cmd = cmd[:77] + '...'
+        print('Bash Permission')
+        print(f':computer: Command: \`{cmd}\`')
+    elif tool_name == 'WebFetch':
+        url = tool_input.get('url', '')
+        if len(url) > 60:
+            url = url[:57] + '...'
+        print('Web Access Permission')
+        print(f':globe_with_meridians: URL: {url}')
+    elif tool_name == 'Task':
+        agent_type = tool_input.get('subagent_type', 'general')
+        desc = tool_input.get('description', '')[:50]
+        print('Agent Task Permission')
+        print(f':robot_face: Agent: {agent_type}')
+        if desc:
+            print(f':clipboard: Task: {desc}')
+    else:
+        print(f'{tool_name} Permission')
+        # Show first key-value from input
+        for k, v in list(tool_input.items())[:1]:
+            v_str = str(v)[:50]
+            print(f':wrench: {k}: {v_str}')
+except Exception as e:
+    print('Permission Request')
+" 2>/dev/null)
+
+            if [ -n "$tool_details" ]; then
+                # Use tool details for title and body
+                title=$(echo "$tool_details" | head -1)
+                body=$(echo "$tool_details" | tail -n +2)
+            fi
+        fi
+    elif echo "$combined" | grep -qi "waiting for your input\|waiting for input"; then
         # Already handled by ask-user.sh (PostToolUse hook)
         exit 0
     fi

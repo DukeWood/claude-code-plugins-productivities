@@ -208,20 +208,21 @@ switch_display = """$switch_display"""
 serial_number = """$serial_number"""
 timestamp = """$timestamp"""
 
-# Build header line
+newline = chr(10)
+
+# Action header + original template
+action_header = ":zap: *ACTION REQUIRED* — Approve in Claude Code"
 header = f"{slack_emoji} *{ntype}* | \`{tool_name}\` | {terminal_type}"
 subheader = f":hourglass: *{project}* -> \`{session_display}\`{switch_display}"
 context = f"\`{serial_number}\` | {timestamp} | \`\`\`{input_short}\`\`\`"
 
-# Use chr(10) to safely represent newline in the output JSON
-newline = chr(10)
-full_text = header + newline + subheader
+full_text = action_header + newline + newline + header + newline + subheader
 
 # Notification preview text (shows in macOS notification banner)
-preview_text = f"{ntype} | {project} | {input_short[:50]}"
+preview_text = f"⚡ ACTION: {ntype} | {project} | {input_short[:50]}"
 
 payload = {
-    'text': preview_text,  # For macOS/mobile notification previews
+    'text': preview_text,
     'attachments': [{
         'color': color,
         'blocks': [
@@ -242,7 +243,6 @@ payload = {
         ]
     }]
 }
-# json.dumps will properly escape the newline as \n
 print(json.dumps(payload))
 PYEOF
 }
@@ -292,11 +292,16 @@ if git_branch:
     context_text += f" | \`{git_branch}\` {git_status}"
 context_text += f" | {timestamp}"
 
+# Build header text - add ACTION REQUIRED for permission requests
+header_text = f"{slack_emoji} {ntype}"
+if ntype == "Permission Required":
+    header_text = f":zap: ACTION REQUIRED — {ntype}"
+
 # Build blocks
 blocks = [
     {
         'type': 'header',
-        'text': {'type': 'plain_text', 'text': f"{slack_emoji} {ntype}", 'emoji': True}
+        'text': {'type': 'plain_text', 'text': header_text, 'emoji': True}
     },
     {
         'type': 'context',
@@ -317,7 +322,10 @@ if switch_command:
     })
 
 # Notification preview text (shows in macOS notification banner)
-preview_text = f"{ntype} | {project} | {body[:50]}"
+if ntype == "Permission Required":
+    preview_text = f"⚡ ACTION: {ntype} | {project}"
+else:
+    preview_text = f"{ntype} | {project} | {body[:50]}"
 
 payload = {
     'text': preview_text,  # For macOS/mobile notification previews
