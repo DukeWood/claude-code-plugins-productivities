@@ -71,8 +71,11 @@ detect_terminal() {
 
     # 2. Check for tmux (can run inside any host terminal)
     local tmux_info=""
+    local confirmed_tmux="false"
+
     if [ -n "$TMUX" ]; then
-        # Running inside tmux - use display-message
+        # Running inside tmux - use display-message (confirmed tmux session)
+        confirmed_tmux="true"
         local tmux_session=$(tmux display-message -p '#{session_name}' 2>/dev/null)
         local tmux_window_index=$(tmux display-message -p '#{window_index}' 2>/dev/null)
         local tmux_window_name=$(tmux display-message -p '#{window_name}' 2>/dev/null)
@@ -80,14 +83,15 @@ detect_terminal() {
         if [ -n "$tmux_session" ]; then
             tmux_info="${tmux_session}:${tmux_window_index}.${tmux_pane_index}|${tmux_window_name}"
         fi
-    elif command -v tmux &>/dev/null; then
-        # Running outside tmux (e.g., hook subprocess) - find pane by cwd
-        # Get most recently active pane matching this cwd
+    elif command -v tmux &>/dev/null && [ -z "$host_terminal" ]; then
+        # Running outside tmux AND no host terminal detected - likely a tmux hook subprocess
+        # Find pane by cwd (only when we don't know the actual terminal)
+        confirmed_tmux="true"
         tmux_info=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}|#{window_name}|#{pane_current_path}|#{pane_active}' 2>/dev/null | \
             awk -F'|' -v cwd="$cwd" '$3 == cwd {print $1"|"$2; exit}')
     fi
 
-    if [ -n "$tmux_info" ]; then
+    if [ -n "$tmux_info" ] && [ "$confirmed_tmux" = "true" ]; then
         local tmux_target=$(echo "$tmux_info" | cut -d'|' -f1)
         local tmux_window_name=$(echo "$tmux_info" | cut -d'|' -f2)
 
