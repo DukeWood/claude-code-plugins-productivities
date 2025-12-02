@@ -70,22 +70,35 @@ detect_terminal() {
     fi
 
     # 2. Check for tmux (can run inside any host terminal)
+    local tmux_info=""
     if [ -n "$TMUX" ]; then
+        # Running inside tmux - use display-message
         local tmux_session=$(tmux display-message -p '#{session_name}' 2>/dev/null)
         local tmux_window_index=$(tmux display-message -p '#{window_index}' 2>/dev/null)
         local tmux_window_name=$(tmux display-message -p '#{window_name}' 2>/dev/null)
         local tmux_pane_index=$(tmux display-message -p '#{pane_index}' 2>/dev/null)
-
         if [ -n "$tmux_session" ]; then
-            if [ -n "$host_terminal" ]; then
-                terminal_type="${host_terminal}+tmux"
-            else
-                terminal_type="tmux"
-            fi
-            # Format: session:window.pane (window_name)
-            terminal_info="${tmux_session}:${tmux_window_index}.${tmux_pane_index} (${tmux_window_name})"
-            switch_command="tmux attach -t ${tmux_session}:${tmux_window_index}.${tmux_pane_index}"
+            tmux_info="${tmux_session}:${tmux_window_index}.${tmux_pane_index}|${tmux_window_name}"
         fi
+    elif command -v tmux &>/dev/null; then
+        # Running outside tmux (e.g., hook subprocess) - find pane by cwd
+        # Get most recently active pane matching this cwd
+        tmux_info=$(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}|#{window_name}|#{pane_current_path}|#{pane_active}' 2>/dev/null | \
+            awk -F'|' -v cwd="$cwd" '$3 == cwd {print $1"|"$2; exit}')
+    fi
+
+    if [ -n "$tmux_info" ]; then
+        local tmux_target=$(echo "$tmux_info" | cut -d'|' -f1)
+        local tmux_window_name=$(echo "$tmux_info" | cut -d'|' -f2)
+
+        if [ -n "$host_terminal" ]; then
+            terminal_type="${host_terminal}+tmux"
+        else
+            terminal_type="tmux"
+        fi
+        # Format: session:window.pane (window_name)
+        terminal_info="${tmux_target} (${tmux_window_name})"
+        switch_command="tmux attach -t ${tmux_target}"
     elif [ -n "$host_terminal" ]; then
         terminal_type="$host_terminal"
     fi

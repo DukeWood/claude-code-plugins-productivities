@@ -16,10 +16,32 @@ STATE_FILE="$HOME/.claude/config/notification_states.json"
 mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
 
 # ============================================
+# Debug logging
+# ============================================
+DEBUG_LOG="/tmp/slack-notify-debug.log"
+
+# ============================================
 # Parse Input JSON
 # ============================================
 python=$(find_python)
 input_json=$(cat)
+
+# Always log hook invocation for debugging (helps trace tmux issues)
+{
+    echo -n "$(date '+%Y-%m-%d %H:%M:%S') | HOOK INVOKED | "
+    echo "$input_json" | $python -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    event = d.get('hook_event_name', '?')
+    ntype = d.get('notification_type', '?')
+    title = str(d.get('title', '?'))[:40]
+    body = str(d.get('body', '?'))[:40]
+    print('event=' + event + ' type=' + ntype + ' title=' + title)
+except Exception as e:
+    print('parse_error: ' + str(e))
+" 2>/dev/null
+} >> "$DEBUG_LOG"
 
 hook_event=$(json_get "$input_json" "hook_event_name" "Notification")
 cwd=$(json_get "$input_json" "cwd" "Unknown")
@@ -45,34 +67,94 @@ if [ "$hook_event" = "Stop" ]; then
         exit 0
     fi
 
+    # Check if running in tmux - always notify for tmux sessions
+    # Note: $TMUX env var may not be available in hook subprocess, so we also
+    # check if any tmux session has a pane in our cwd
+    in_tmux="false"
+    if [ -n "$TMUX" ]; then
+        in_tmux="true"
+    elif command -v tmux &>/dev/null && tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null | grep -q "^${cwd}$"; then
+        in_tmux="true"
+    fi
+
     # Check if we were waiting for input (idle state)
     was_idle="false"
     if [ -f "$STATE_FILE" ]; then
         was_idle=$($python -c "import json; print(str(json.load(open('$STATE_FILE')).get('was_idle', False)).lower())" 2>/dev/null)
     fi
 
-    if [ "$was_idle" != "true" ]; then
-        # Not idle - skip notification
+    # Log the decision for debugging
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | STOP | in_tmux=$in_tmux was_idle=$was_idle cwd=$cwd" >> "$DEBUG_LOG"
+
+    # Skip notification only if NOT in tmux AND NOT idle
+    if [ "$in_tmux" != "true" ] && [ "$was_idle" != "true" ]; then
+        # Not in tmux and not idle - skip notification
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | STOP | SKIPPED (not tmux, not idle)" >> "$DEBUG_LOG"
         exit 0
     fi
 
     # Reset idle state
     echo '{"was_idle": false}' > "$STATE_FILE"
 
+    # ============================================
+    # Categorize based on git changes
+    # ============================================
+    category="Task"
+    file_summary=""
+
+    if cd "$cwd" 2>/dev/null && git rev-parse --git-dir &>/dev/null; then
+        # Get changed files
+        changed_files=$(git diff --name-only 2>/dev/null)
+        new_files=$(git ls-files --others --exclude-standard 2>/dev/null)
+        all_changes=$(echo -e "$changed_files\n$new_files" | grep -v '^$')
+
+        # Count changes
+        change_count=$(echo "$all_changes" | grep -c . 2>/dev/null || echo "0")
+
+        # Categorize based on file paths
+        if echo "$all_changes" | grep -qE "Journals/|Memory/"; then
+            category="CRM Update"
+        elif echo "$all_changes" | grep -qE "\.sh$|hooks/"; then
+            category="Automation"
+        elif echo "$all_changes" | grep -qE "\.(js|ts|py|json)$"; then
+            category="Code Edit"
+        elif echo "$all_changes" | grep -qE "\.md$"; then
+            category="Documentation"
+        elif [ "$change_count" -eq 0 ]; then
+            category="Research"
+        fi
+
+        # Build summary
+        if [ "$change_count" -gt 0 ]; then
+            # Get first changed file's basename for context
+            first_file=$(echo "$all_changes" | head -1 | xargs basename 2>/dev/null)
+            if [ "$change_count" -eq 1 ]; then
+                file_summary="$first_file"
+            else
+                file_summary="$first_file +$((change_count - 1)) more"
+            fi
+        else
+            file_summary="No file changes"
+        fi
+    fi
+
     # Set Stop event message
-    title="Task Complete"
-    body="Claude Code has finished responding"
+    title="$category Complete"
+    body="$file_summary"
     notification_type="task_complete"
 else
     # ============================================
     # Handle Notification Event
     # ============================================
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | Starting notification handler" >> "$DEBUG_LOG"
 
     # Parse notification fields
     message=$(json_get "$input_json" "message" "")
     notification_type=$(json_get "$input_json" "notification_type" "")
     title=$(json_get "$input_json" "title" "Claude Code")
     body=$(json_get "$input_json" "body" "")
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | parsed: type=$notification_type title='${title:0:30}' body='${body:0:30}'" >> "$DEBUG_LOG"
 
     # Use message field if available
     if [ -n "$message" ]; then
@@ -86,8 +168,11 @@ else
     combined="$title $body $message"
 
     # Check if this is a permission request (ACTION REQUIRED)
-    if echo "$combined" | grep -qi "permission\|needs your permission"; then
+    # Method 1: notification_type is already permission_prompt (from Claude Code)
+    # Method 2: Text contains permission-related keywords
+    if [ "$notification_type" = "permission_prompt" ] || echo "$combined" | grep -qi "permission\|needs your permission\|needs your attention"; then
         # This IS actionable - set type and continue
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | PERMISSION detected, proceeding" >> "$DEBUG_LOG"
         notification_type="permission_prompt"
 
         # ============================================
@@ -157,12 +242,24 @@ except Exception as e:
         fi
     elif echo "$combined" | grep -qi "waiting for your input\|waiting for input"; then
         # Already handled by ask-user.sh (PostToolUse hook)
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | SKIPPED - waiting for input (handled by ask-user.sh)" >> "$DEBUG_LOG"
+        exit 0
+    elif [ "$notification_type" = "idle_prompt" ]; then
+        # Idle prompt - also actionable, user should be notified
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | IDLE_PROMPT detected, proceeding" >> "$DEBUG_LOG"
+        title="Claude Code"
+        body="Waiting for your input"
+    else
+        # Not actionable - skip unknown notification types
+        echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | SKIPPED - not actionable (type=$notification_type)" >> "$DEBUG_LOG"
         exit 0
     fi
 
     # Defaults
     [ -z "$title" ] && title="Claude Code"
     [ -z "$body" ] && body="Notification"
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | NOTIFY | Final: title='${title:0:40}' body='${body:0:40}'" >> "$DEBUG_LOG"
 
     # Set idle state for next Stop event
     echo '{"was_idle": true}' > "$STATE_FILE"

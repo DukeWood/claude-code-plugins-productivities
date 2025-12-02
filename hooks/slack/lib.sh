@@ -143,23 +143,31 @@ get_notification_style() {
 send_to_slack() {
     local payload="$1"
     local python=$(find_python)
+    local debug_log="/tmp/slack-notify-debug.log"
 
     # Pass payload via stdin to avoid heredoc escaping issues
     echo "$payload" | $python -c "
 import json
 import urllib.request
 import sys
+from datetime import datetime
 
 webhook = '${SLACK_WEBHOOK}'
+debug_log = '$debug_log'
+
+def log(msg):
+    with open(debug_log, 'a') as f:
+        f.write(f'{datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")} | SEND | {msg}\n')
 
 try:
     payload_str = sys.stdin.read()
     payload = json.loads(payload_str)
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(webhook, data=data, headers={'Content-Type': 'application/json'})
-    urllib.request.urlopen(req, timeout=5)
-except:
-    pass  # Fail silently - don't block Claude
+    resp = urllib.request.urlopen(req, timeout=5)
+    log(f'SUCCESS status={resp.status}')
+except Exception as e:
+    log(f'ERROR {type(e).__name__}: {str(e)[:100]}')
 "
 }
 
