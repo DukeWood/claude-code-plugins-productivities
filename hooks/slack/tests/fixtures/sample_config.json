@@ -1,0 +1,10 @@
+{
+  "webhook_url": "https://hooks.slack.com/services/TTEST/BTEST/test-placeholder",
+  "enabled": true,
+  "notify_on": {
+    "permission_required": true,
+    "task_complete": true,
+    "input_required": true
+  },
+  "notify_always": false
+}

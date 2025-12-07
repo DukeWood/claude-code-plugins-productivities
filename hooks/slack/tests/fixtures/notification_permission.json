@@ -1,0 +1,12 @@
+{
+  "hook_event_name": "Notification",
+  "notification_type": "permission_prompt",
+  "session_id": "abc123def456",
+  "cwd": "/Users/test/project",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "/Users/test/project/src/app.ts",
+    "old_string": "const x = 1",
+    "new_string": "const x = 2"
+  }
+}

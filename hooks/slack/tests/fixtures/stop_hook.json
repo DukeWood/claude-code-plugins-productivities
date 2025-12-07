@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "abc123def456",
+  "cwd": "/Users/test/project",
+  "stop_reason": "user_request"
+}

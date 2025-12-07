@@ -1,0 +1,9 @@
+{
+  "tool_name": "WebFetch",
+  "tool_input": {
+    "url": "https://api.github.com/repos/anthropics/claude-code/releases",
+    "prompt": "Get the latest release version"
+  },
+  "session_id": "abc123def456",
+  "cwd": "/Users/test/project"
+}

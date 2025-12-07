@@ -1,0 +1,9 @@
+{
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm install express && npm install typescript --save-dev",
+    "description": "Install dependencies"
+  },
+  "session_id": "abc123def456",
+  "cwd": "/Users/test/project"
+}
