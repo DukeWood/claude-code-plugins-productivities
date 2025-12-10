@@ -1,0 +1,24 @@
+{
+  "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+  "enabled": true,
+  "notify_on": {
+    "permission_required": true,
+    "task_complete": true,
+    "input_required": true
+  },
+  "notify_always": false,
+
+  "rate_limiting": {
+    "enabled": true,
+    "cooldowns": {
+      "permission": 30,
+      "idle": 60,
+      "complete": 0
+    }
+  },
+
+  "deduplication": {
+    "enabled": true,
+    "window_seconds": 300
+  }
+}

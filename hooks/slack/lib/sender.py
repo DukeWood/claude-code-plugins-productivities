@@ -105,13 +105,18 @@ def validate_webhook_url(url: str) -> str:
 # Payload Builders
 # =============================================================================
 
-def build_permission_payload(event_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def build_permission_payload(
+    event_data: Dict[str, Any],
+    context: Dict[str, Any],
+    suppressed_count: int = 0
+) -> Dict[str, Any]:
     """
     Build Slack Block Kit payload for permission request.
 
     Args:
         event_data: Event data from hook (tool_name, tool_input, etc.)
         context: Enriched context (project_name, git_branch, terminal_info, etc.)
+        suppressed_count: Number of previously suppressed notifications
 
     Returns:
         Slack webhook payload with blocks
@@ -135,6 +140,10 @@ def build_permission_payload(event_data: Dict[str, Any], context: Dict[str, Any]
     if context.get("terminal_type"):
         context_parts.append(f"{context['terminal_type']}")
     context_parts.append(f"#{session_serial}")
+
+    # Add suppressed count indicator if any
+    if suppressed_count > 0:
+        context_parts.append(f"+{suppressed_count} suppressed")
 
     # Build blocks
     blocks = [
@@ -177,6 +186,8 @@ def build_permission_payload(event_data: Dict[str, Any], context: Dict[str, Any]
 
     # Build payload
     fallback_text = f"{project_name}: {tool_name} permission required"
+    if suppressed_count > 0:
+        fallback_text += f" (+{suppressed_count} suppressed)"
 
     return {
         "text": fallback_text,
@@ -269,13 +280,18 @@ def build_stop_payload(event_data: Dict[str, Any], context: Dict[str, Any]) -> D
     }
 
 
-def build_idle_payload(event_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def build_idle_payload(
+    event_data: Dict[str, Any],
+    context: Dict[str, Any],
+    suppressed_count: int = 0
+) -> Dict[str, Any]:
     """
     Build Slack Block Kit payload for idle/input required.
 
     Args:
         event_data: Event data from Notification hook
         context: Enriched context
+        suppressed_count: Number of previously suppressed notifications
 
     Returns:
         Slack webhook payload with blocks
@@ -320,6 +336,10 @@ def build_idle_payload(event_data: Dict[str, Any], context: Dict[str, Any]) -> D
         context_parts.append(f"{context['terminal_type']}")
     context_parts.append(f"#{session_serial}")
 
+    # Add suppressed count indicator if any
+    if suppressed_count > 0:
+        context_parts.append(f"+{suppressed_count} suppressed")
+
     blocks.append({
         "type": "context",
         "elements": [
@@ -332,6 +352,8 @@ def build_idle_payload(event_data: Dict[str, Any], context: Dict[str, Any]) -> D
 
     # Build payload
     fallback_text = f"{project_name}: Waiting for input"
+    if suppressed_count > 0:
+        fallback_text += f" (+{suppressed_count} suppressed)"
 
     return {
         "text": fallback_text,
@@ -437,16 +459,48 @@ def _format_git_summary(context: Dict[str, Any]) -> str:
 # Notification Sending
 # =============================================================================
 
+def _build_slack_payload(stored_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build Slack Block Kit payload from stored notification data.
+
+    Args:
+        stored_payload: Notification payload stored in database
+
+    Returns:
+        Slack-formatted payload ready to send to webhook
+    """
+    notification_type = stored_payload.get("type", "")
+    event_data = stored_payload.get("event_data", {})
+    context = stored_payload.get("context", {})
+    suppressed_count = stored_payload.get("suppressed_count", 0)
+
+    # If payload already has "blocks", it's already in Slack format
+    if "blocks" in stored_payload:
+        return stored_payload
+
+    # Build appropriate payload based on type
+    if notification_type == "permission":
+        return build_permission_payload(event_data, context, suppressed_count)
+    elif notification_type == "idle":
+        return build_idle_payload(event_data, context, suppressed_count)
+    elif notification_type == "stop":
+        return build_stop_payload(event_data, context)
+    else:
+        # Fallback: return as-is for unknown types
+        return stored_payload
+
+
 def send_notification(db: sqlite3.Connection, notification_id: int) -> bool:
     """
     Send a single notification via webhook.
 
     This function:
     1. Loads notification from database
-    2. Gets webhook URL from config
-    3. Sends HTTP POST to webhook
-    4. Updates notification status (sent/failed)
-    5. Increments retry count on failure
+    2. Gets webhook URL from config or payload
+    3. Builds Slack Block Kit payload
+    4. Sends HTTP POST to webhook
+    5. Updates notification status (sent/failed)
+    6. Increments retry count on failure
 
     Args:
         db: SQLite database connection
@@ -469,17 +523,28 @@ def send_notification(db: sqlite3.Connection, notification_id: int) -> bool:
     if not notif:
         raise NotificationError(f"Notification {notification_id} not found")
 
-    # Get webhook URL from config
-    webhook_config = db.execute(
-        "SELECT value FROM config WHERE key = 'slack_webhook_url'"
-    ).fetchone()
-
-    if not webhook_config:
-        error_msg = "Slack webhook URL not configured"
+    # Parse stored payload
+    try:
+        stored_payload = json.loads(notif["payload"])
+    except json.JSONDecodeError as e:
+        error_msg = f"Invalid JSON payload: {e}"
         _update_notification_failed(db, notification_id, notif["retry_count"], error_msg)
         return False
 
-    webhook_url = webhook_config["value"]
+    # Get webhook URL from payload or config
+    webhook_url = stored_payload.get("webhook_url", "")
+
+    if not webhook_url:
+        webhook_config = db.execute(
+            "SELECT value FROM config WHERE key = 'slack_webhook_url'"
+        ).fetchone()
+
+        if not webhook_config:
+            error_msg = "Slack webhook URL not configured"
+            _update_notification_failed(db, notification_id, notif["retry_count"], error_msg)
+            return False
+
+        webhook_url = webhook_config["value"]
 
     # Validate webhook URL
     try:
@@ -489,19 +554,14 @@ def send_notification(db: sqlite3.Connection, notification_id: int) -> bool:
         _update_notification_failed(db, notification_id, notif["retry_count"], error_msg)
         return False
 
-    # Parse payload
-    try:
-        payload = json.loads(notif["payload"])
-    except json.JSONDecodeError as e:
-        error_msg = f"Invalid JSON payload: {e}"
-        _update_notification_failed(db, notification_id, notif["retry_count"], error_msg)
-        return False
+    # Build Slack payload from stored data
+    slack_payload = _build_slack_payload(stored_payload)
 
     # Send webhook
     try:
         response = requests.post(
             webhook_url,
-            json=payload,
+            json=slack_payload,
             timeout=10,
             headers={"Content-Type": "application/json"}
         )
